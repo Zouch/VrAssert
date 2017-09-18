@@ -1,23 +1,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef _DEBUG
+#if defined(__clang__) || defined(__GNUC__)
+#	define BREAKPOINT() asm volatile ("int $3")
+#elif defined(_MSC_VER)
+#	define BREAKPOINT() __debugbreak()
+#endif
 
-#define BREAKPOINT(arg) __debugbreak()
+#if defined(_DEBUG)
+#	define MACRO_BEGIN do {
+#	define MACRO_END } while (0)
+#else
+#	define MACRO_BEGIN if (true) {
+#	define MACRO_END } else {}
+#endif
 
+#if defined(_DEBUG) || defined(LOG_ASSERT)
+
+namespace
+{
 void clearInputBuffer()
 {
-	char c;
-	while ((c = getchar()) != '\n' && c != EOF) {}
+	char lChar;
+	while ((lChar = getchar()) != '\n' && lChar != EOF) {}
 }
 
 bool handleAssert()
 {
+#if defined(_DEBUG)
 	fprintf(stderr, "Assert handling: break (b, default), continue (c), ignore (i), quit (q): ");
-	char value = getchar();
+	char lValue = getchar();
 	clearInputBuffer();
 
-	switch (value)
+	switch (lValue)
 	{
 	case 'c':
 		return false;
@@ -29,45 +44,51 @@ bool handleAssert()
 		exit(42);
 		break;
 	default:
-		BREAKPOINT(0);
+		BREAKPOINT();
 		return false;
 	}
+#else
+	return false;
+#endif
+}
+
+FILE* getAssertFile()
+{
+#if !defined(_DEBUG) && defined(LOG_ASSERT_FILE)
+	static FILE* sFile = fopen(LOG_ASSERT_FILE, "w");
+#else
+	static FILE* sFile = stderr;
+#endif
+
+	return sFile;
+}
 }
 
 // Allow with and without a message assert calls
 // https://stackoverflow.com/a/28074198/4717805
-// It might be great to find out if there is a way to allow 
-// a call with any number of parameters,
-// but this does not seem to work properly
-#define PRINT_8(_1, _2, _3, _4, _5, _6, _7, _8) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3, _4, _5, _6, _7, _8)
-#define PRINT_7(_1, _2, _3, _4, _5, _6, _7) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3, _4, _5, _6, _7)
-#define PRINT_6(_1, _2, _3, _4, _5, _6) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3, _4, _5, _6)
-#define PRINT_5(_1, _2, _3, _4, _5) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3, _4, _5)
-#define PRINT_4(_1, _2, _3, _4) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3, _4)
-#define PRINT_3(_1, _2, _3) fprintf(stderr, ": "); fprintf(stderr, _1, _2, _3)
-#define PRINT_2(_1, _2) fprintf(stderr, ": "); fprintf(stderr, _1, _2)
-#define PRINT_1(_1) PRINT_2("%s", _1)
-#define PRINT_0() 
+#define PRINT_N(...) fprintf(lFile, ": "); fprintf(lFile, __VA_ARGS__)
+#define PRINT_0()
 
 #define PRINT_CHOOSER(_f0, _f1, _f2, _f3, _f4, _f5, _f6, _f7, _f8, ...) _f8
-#define PRINT_RECOMPOSER(args) PRINT_CHOOSER args
-#define CHOOSE_FROM_ARGCOUNT(...) PRINT_RECOMPOSER ((__VA_ARGS__, PRINT_8, PRINT_7, PRINT_6, PRINT_5, PRINT_4, PRINT_3, PRINT_2, PRINT_1, ))
+#define PRINT_RECOMPOSER(pArgs) PRINT_CHOOSER pArgs
+#define CHOOSE_FROM_ARGCOUNT(...) PRINT_RECOMPOSER ((__VA_ARGS__, PRINT_N, PRINT_N, PRINT_N, PRINT_N, PRINT_N, PRINT_N, PRINT_N, PRINT_N, ))
 #define NO_ARG_EXPANDER() ,,,,,,,, PRINT_0
 #define CHOOSER(...) CHOOSE_FROM_ARGCOUNT(NO_ARG_EXPANDER __VA_ARGS__ ())
 
 #define VrAssert(x, ...)																\
-	do {																				\
-		static bool ignoreLater = false;												\
-		if (!(x) && !ignoreLater) {														\
-			fprintf(stderr, "%s:%i: Assertion `%s` failed", __FILE__, __LINE__, #x);	\
-			CHOOSER(__VA_ARGS__)(__VA_ARGS__);											\
-			fprintf(stderr, "\n");														\
-			ignoreLater = handleAssert();												\
-		}																				\
-	} while (false)
+	MACRO_BEGIN																			\
+	static bool sIgnoreLater = false;													\
+	if (!(x) && !sIgnoreLater) {														\
+		FILE* lFile = getAssertFile();													\
+		fprintf(lFile, "%s:%i: Assertion `%s` failed", __FILE__, __LINE__, #x);			\
+		CHOOSER(__VA_ARGS__)(__VA_ARGS__);												\
+		fprintf(lFile, "\n");															\
+		sIgnoreLater = handleAssert();													\
+	}																					\
+	MACRO_END
 
 #else
-#define VrAssert(x)
+#define VrAssert(...)
 #endif
 
 int main()
@@ -82,10 +103,10 @@ int main()
 
 	for (int i = 0; i < 5; ++i)
 	{
-		VrAssert(false, "Swaggy P");
+		VrAssert(false, "Iteration %d", i);
 	}
 
-	printf("Ok\n");
+	VrAssert(false, "Ok");
 
-    return 0;
+	return 0;
 }
